@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Spamfilter</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 40px auto;
+      padding: 20px;
+      background: #f4f6f8;
+      color: #222;
+    }
+
+    h1 {
+      text-align: center;
+      color: #1f2937;
+    }
+
+    .box {
+      background: white;
+      padding: 25px;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+    }
+
+    textarea {
+      width: 100%;
+      height: 150px;
+      font-size: 16px;
+      padding: 12px;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+      resize: vertical;
+      box-sizing: border-box;
+    }
+
+    button {
+      margin-top: 15px;
+      padding: 12px 20px;
+      font-size: 16px;
+      border: none;
+      border-radius: 8px;
+      background: #2563eb;
+      color: white;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #1d4ed8;
+    }
+
+    #result {
+      margin-top: 20px;
+      padding: 15px;
+      border-radius: 8px;
+      background: #eef2ff;
+      font-size: 18px;
+      font-weight: bold;
+    }
+
+    .small {
+      font-size: 14px;
+      color: #555;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>AI Spamfilter</h1>
+
+  <div class="box">
+    <p>Skriv eller klistra in ett meddelande nedan. AI-modellen försöker avgöra om det är spam eller inte.</p>
+
+    <textarea id="messageInput" placeholder="Skriv ett meddelande här..."></textarea>
+
+    <button onclick="checkSpam()">Kontrollera meddelande</button>
+
+    <div id="result">Modellen laddas...</div>
+
+    <p class="small">
+      Detta är ett enkelt AI-baserat spamfilter gjort med TensorFlow.js.
+    </p>
+  </div>
+
+  <script>
+    let model;
+    let metadata;
+
+    async function loadModel() {
+      try {
+        model = await tf.loadLayersModel("tfjs_model/model.json");
+
+        try {
+          const response = await fetch("tfjs_model/metadata.json");
+          metadata = await response.json();
+        } catch {
+          metadata = null;
+        }
+
+        document.getElementById("result").innerText = "Modellen är laddad och redo.";
+      } catch (error) {
+        document.getElementById("result").innerText =
+          "Kunde inte ladda modellen. Kontrollera att tfjs_model/model.json finns.";
+        console.error(error);
+      }
+    }
+
+    function cleanText(text) {
+      return text
+        .toLowerCase()
+        .replace(/[^\wåäöÅÄÖ\s]/g, "")
+        .split(/\s+/)
+        .filter(word => word.length > 0);
+    }
+
+    function padSequence(sequence, maxLength) {
+      const padded = sequence.slice(0, maxLength);
+
+      while (padded.length < maxLength) {
+        padded.push(0);
+      }
+
+      return padded;
+    }
+
+    function textToTensor(text) {
+      const words = cleanText(text);
+
+      if (!metadata || !metadata.word_index) {
+        throw new Error("metadata.json saknar word_index. Kontrollera hur din metadata är byggd.");
+      }
+
+      const wordIndex = metadata.word_index;
+      const maxLength = metadata.max_len || metadata.maxLength || 100;
+      const unknownToken = metadata.oov_index || 1;
+
+      const sequence = words.map(word => {
+        return wordIndex[word] || unknownToken;
+      });
+
+      const padded = padSequence(sequence, maxLength);
+
+      return tf.tensor2d([padded], [1, maxLength]);
+    }
+
+    async function checkSpam() {
+      const text = document.getElementById("messageInput").value;
+
+      if (!text.trim()) {
+        document.getElementById("result").innerText = "Skriv ett meddelande först.";
+        return;
+      }
+
+      if (!model) {
+        document.getElementById("result").innerText = "Modellen har inte laddats än.";
+        return;
+      }
+
+      try {
+        const inputTensor = textToTensor(text);
+        const prediction = model.predict(inputTensor);
+        const values = await prediction.data();
+
+        inputTensor.dispose();
+        prediction.dispose();
+
+        let spamProbability;
+
+        if (values.length === 1) {
+          spamProbability = values[0];
+        } else {
+          spamProbability = values[1];
+        }
+
+        const percent = Math.round(spamProbability * 100);
+
+        if (spamProbability >= 0.5) {
+          document.getElementById("result").innerText =
+            `Resultat: Troligen SPAM (${percent}% säkerhet)`;
+        } else {
+          document.getElementById("result").innerText =
+            `Resultat: Troligen INTE spam (${100 - percent}% säkerhet)`;
+        }
+
+      } catch (error) {
+        document.getElementById("result").innerText =
+          "Något gick fel vid analysen. Kontrollera att metadata.json passar modellen.";
+        console.error(error);
+      }
+    }
+
+    loadModel();
+  </script>
+</body>
+</html>
