@@ -1,3 +1,4 @@
+```html
 <!DOCTYPE html>
 <html lang="sv">
 <head>
@@ -92,22 +93,45 @@
   <script>
     let model;
     let metadata;
+    let wordIndex = {};
+    let maxLength = 100;
 
     async function loadModel() {
       try {
         model = await tf.loadLayersModel("tfjs_model/model.json");
 
-        try {
-          const response = await fetch("tfjs_model/metadata.json");
-          metadata = await response.json();
-        } catch {
-          metadata = null;
+        const response = await fetch("tfjs_model/metadata.json");
+        metadata = await response.json();
+
+        if (metadata.word_index) {
+          wordIndex = metadata.word_index;
+        } else if (metadata.wordIndex) {
+          wordIndex = metadata.wordIndex;
+        } else {
+          throw new Error("Hittade ingen word_index i metadata.json.");
         }
 
-        document.getElementById("result").innerText = "Modellen är laddad och redo.";
+        const modelInputLength = model.inputs[0].shape[1];
+
+        maxLength =
+          metadata.max_len ||
+          metadata.maxLength ||
+          metadata.max_length ||
+          metadata.max_sequence_length ||
+          modelInputLength ||
+          100;
+
+        document.getElementById("result").innerText =
+          "Modellen är laddad och redo.";
+        
+        console.log("Modell laddad.");
+        console.log("Input shape:", model.inputs[0].shape);
+        console.log("Max length:", maxLength);
+        console.log("Antal ord i word_index:", Object.keys(wordIndex).length);
+
       } catch (error) {
         document.getElementById("result").innerText =
-          "Kunde inte ladda modellen. Kontrollera att tfjs_model/model.json finns.";
+          "Kunde inte ladda modellen eller metadata. Kontrollera att tfjs_model/model.json och tfjs_model/metadata.json finns.";
         console.error(error);
       }
     }
@@ -120,34 +144,27 @@
         .filter(word => word.length > 0);
     }
 
-    function padSequence(sequence, maxLength) {
-      const padded = sequence.slice(0, maxLength);
+    function textToSequence(text) {
+      const words = cleanText(text);
+      const unknownToken = wordIndex["<OOV>"] || wordIndex["<UNK>"] || 1;
 
-      while (padded.length < maxLength) {
-        padded.push(0);
+      return words.map(word => {
+        return wordIndex[word] || unknownToken;
+      });
+    }
+
+    function padSequence(sequence, length) {
+      const padded = new Array(length).fill(0);
+
+      const truncated = sequence.slice(-length);
+
+      const start = length - truncated.length;
+
+      for (let i = 0; i < truncated.length; i++) {
+        padded[start + i] = truncated[i];
       }
 
       return padded;
-    }
-
-    function textToTensor(text) {
-      const words = cleanText(text);
-
-      if (!metadata || !metadata.word_index) {
-        throw new Error("metadata.json saknar word_index. Kontrollera hur din metadata är byggd.");
-      }
-
-      const wordIndex = metadata.word_index;
-      const maxLength = metadata.max_len || metadata.maxLength || 100;
-      const unknownToken = metadata.oov_index || 1;
-
-      const sequence = words.map(word => {
-        return wordIndex[word] || unknownToken;
-      });
-
-      const padded = padSequence(sequence, maxLength);
-
-      return tf.tensor2d([padded], [1, maxLength]);
     }
 
     async function checkSpam() {
@@ -164,7 +181,11 @@
       }
 
       try {
-        const inputTensor = textToTensor(text);
+        const sequence = textToSequence(text);
+        const padded = padSequence(sequence, maxLength);
+
+        const inputTensor = tf.tensor2d([padded], [1, maxLength], "int32");
+
         const prediction = model.predict(inputTensor);
         const values = await prediction.data();
 
@@ -179,19 +200,20 @@
           spamProbability = values[1];
         }
 
-        const percent = Math.round(spamProbability * 100);
+        const spamPercent = Math.round(spamProbability * 100);
+        const notSpamPercent = Math.round((1 - spamProbability) * 100);
 
         if (spamProbability >= 0.5) {
           document.getElementById("result").innerText =
-            `Resultat: Troligen SPAM (${percent}% säkerhet)`;
+            `Resultat: Troligen SPAM (${spamPercent}% spam-sannolikhet)`;
         } else {
           document.getElementById("result").innerText =
-            `Resultat: Troligen INTE spam (${100 - percent}% säkerhet)`;
+            `Resultat: Troligen INTE spam (${notSpamPercent}% inte-spam-sannolikhet)`;
         }
 
       } catch (error) {
         document.getElementById("result").innerText =
-          "Något gick fel vid analysen. Kontrollera att metadata.json passar modellen.";
+          "Något gick fel vid analysen. Öppna Console med F12 för mer information.";
         console.error(error);
       }
     }
@@ -200,3 +222,4 @@
   </script>
 </body>
 </html>
+```
